@@ -5,6 +5,12 @@ Tudo que controla comportamento e SEGURANÇA fica aqui. Os valores padrão são
 conservadores de propósito — suba devagar, ao longo de dias, se nada bloquear.
 Veja o README.md para a explicação de cada limite e o risco de ban.
 """
+import os
+
+# Raiz do projeto (onde este config.py mora). Todos os paths abaixo são ancorados
+# aqui — assim NÃO importa de qual diretório você roda `python main.py`: o perfil
+# logado, o output e o state.json são sempre os mesmos.
+_BASE = os.path.dirname(os.path.abspath(__file__))
 
 # ─────────────────────────── Alvo ───────────────────────────
 GRUPO_NOME = "vai toma no quase nada"
@@ -14,7 +20,7 @@ THREAD_URL = f"https://www.instagram.com/direct/t/{THREAD_ID}/"
 # ─────────────────────── Sessão / navegador ─────────────────
 # Pasta com o perfil logado do Chrome (cookies/sessão persistem aqui).
 # Na 1ª vez rode `python main.py --login` e faça login manual nessa janela.
-USER_DATA_DIR = "browser_profile"      # criado dentro da pasta do projeto
+USER_DATA_DIR = os.path.join(_BASE, "browser_profile")   # ancorado na pasta do projeto
 HEADLESS = False                       # headed é menos detectável; mude por conta própria
 LOCALE = "pt-BR"
 # Use o MESMO User-Agent do seu Chrome real (o da captura):
@@ -70,6 +76,6 @@ COOLDOWN_BLOQUEIO_HORAS = 36
 MAX_PAGINAS_MENSAGENS = 14
 
 # ─────────────────────────── Paths ──────────────────────────
-OUTPUT_DIR = "output"
-STATE_FILE = "output/state.json"
-LOG_FILE = "output/run.log"
+OUTPUT_DIR = os.path.join(_BASE, "output")
+STATE_FILE = os.path.join(OUTPUT_DIR, "state.json")
+LOG_FILE = os.path.join(OUTPUT_DIR, "run.log")
