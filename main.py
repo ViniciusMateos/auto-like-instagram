@@ -16,11 +16,41 @@ Uso:
   python main.py --debug            # despeja a 1ª página de mensagens p/ calibração
 """
 import argparse
+import os
 import sys
+import traceback
+from datetime import datetime
 
 import config
 from safety import State, Guard, log, BloqueioDetectado, LimiteAtingido
 from ig import IG, extrair_post, tem_reacao
+
+LOGS_ERRO_DIR = os.path.join(config.OUTPUT_DIR, "logs")
+
+
+def imprimir_saldo(guard, motivo=""):
+    """Resumo final SEMPRE impresso (fim normal, erro, bloqueio ou Ctrl+C)."""
+    extra = f" — {motivo}" if motivo else ""
+    log.info("──────────────── SALDO DA EXECUÇÃO%s ────────────────", extra)
+    log.info("   seguidas (públicas) ....... %d", guard.seguidos)
+    log.info("   solicitadas (privadas) .... %d", guard.pendentes)
+    log.info("   puladas (já seguia/etc) ... %d", guard.pulados)
+    log.info("   total de ações de follow .. %d", guard.seguidos + guard.pendentes)
+    log.info("─────────────────────────────────────────────────────")
+
+
+def tratar_erro(exc, titulo):
+    """Salva o traceback completo num arquivo e mostra só o resumido no console."""
+    os.makedirs(LOGS_ERRO_DIR, exist_ok=True)
+    nome = "erro_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".log"
+    caminho = os.path.join(LOGS_ERRO_DIR, nome)
+    try:
+        with open(caminho, "w", encoding="utf-8") as f:
+            f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    except Exception:
+        caminho = "(não consegui salvar o arquivo de erro)"
+    log.error("⛔ %s: %s", titulo, str(exc)[:160])
+    log.error("   detalhes completos em: %s", caminho)
 
 
 def modo_login():
@@ -104,39 +134,40 @@ def processar_post(ig, p, state, guard, dry):
         uname = u.get("username", "?")
         motivo = deve_pular_liker(u, state)
         if motivo:
-            log.info("│    · pulou @%-28s (%s)", uname, motivo)
-            pulados += 1
+            log.info("│    . pulou @%-28s (%s)", uname, motivo)
+            pulados += 1; guard.pulados += 1
             continue
         guard.pode_seguir()                       # levanta LimiteAtingido se estourar
         if dry:
-            tag = "pedido (priv)" if (u.get("is_private") or (u.get("friendship_status") or {}).get("is_private")) else "seguiria"
-            log.info("│    ✓ [dry] %s @%s", tag, uname)
-            seguidos += 1
+            priv = u.get("is_private") or (u.get("friendship_status") or {}).get("is_private")
+            log.info("│    + [dry] %s @%s", "pedido (priv)" if priv else "seguiria", uname)
+            if priv: pendentes += 1; guard.pendentes += 1
+            else:    seguidos += 1; guard.seguidos += 1
             guard.pos_follow_dry()                # contabiliza p/ o cap ser fiel
             continue
         resp = ig.seguir(uid)
         fs = resp.get("friendship_status") or {}
         if fs.get("following"):                   # pública → virou "Seguindo"
-            state.marcar_seguido(uid); seguidos += 1
-            log.info("│    ✓ seguiu @%s", uname)
+            state.marcar_seguido(uid); seguidos += 1; guard.seguidos += 1
+            log.info("│    + seguiu @%s", uname)
             guard.pos_follow()
         elif fs.get("outgoing_request"):          # privada → pedido pendente
-            state.marcar_seguido(uid); pendentes += 1
-            log.info("│    ⏳ pedido enviado @%s (privado)", uname)
+            state.marcar_seguido(uid); pendentes += 1; guard.pendentes += 1
+            log.info("│    ~ pedido enviado @%s (privado)", uname)
             guard.pos_follow()
         else:
             log.warning("│    ! follow @%s sem confirmação: %s", uname, str(resp)[:140])
 
-    # marca o post como feito: reação ❤️ + estado local
+    # marca o post como feito: reação no chat + estado local
     if dry:
-        log.info("└─ [dry] reagiria ❤️ — agiria em %d, pulou %d (de @%s)",
-                 seguidos, pulados, p.get("autor") or "?")
+        log.info("└─ [dry] reagiria — agiria em %d, pulou %d (de @%s)",
+                 seguidos + pendentes, pulados, p.get("autor") or "?")
     else:
         ig.ir(config.THREAD_URL)
         guard.dormir(config.DELAY_ACAO_UI, "voltando à thread")
         ig.reagir_coracao(p["message_id"])
         state.marcar_post(p["code"], p["message_id"])
-        log.info("└─ ❤️ post de @%s marcado — seguiu %d, pedidos %d (priv), pulou %d",
+        log.info("└─ post de @%s marcado [reagido] — seguiu %d, pedidos %d (priv), pulou %d",
                  p.get("autor") or "?", seguidos, pendentes, pulados)
     return seguidos + pendentes
 
@@ -146,8 +177,7 @@ def run(dry=False, start_after=None, debug=False, ignorar_janela=False):
     guard = Guard(state, dry_run=dry)
 
     try:
-        guard.checar_cooldown()
-        guard.checar_janela(ignorar=ignorar_janela)
+        guard.checar_janela(ignorar=ignorar_janela)   # sem cooldown por bloqueio
     except LimiteAtingido as e:
         log.info("Não vou rodar agora: %s", e)
         return
@@ -160,42 +190,40 @@ def run(dry=False, start_after=None, debug=False, ignorar_janela=False):
             return
         ig.carregar_tokens()
 
-        nodes = ig.ler_mensagens(debug_dump=debug, parar_na_reacao=True)
-        log.info("%d mensagens varridas.", len(nodes))
-        posts = montar_lista_posts(nodes, state)
-        feitos = [p["code"] for p in posts if p["processed"]]
-        log.info("%d posts na thread | %d já marcados.", len(posts), len(feitos))
-
-        candidatos = escolher_candidatos(posts, start_after=start_after)
-        limite = config.MAX_POSTS_POR_RUN if config.APLICAR_CAPS else len(candidatos)
-        candidatos = candidatos[:limite]
-        if not candidatos:
-            log.info("Nenhum post novo para processar. 👋")
-            return
-        if not config.APLICAR_CAPS:
-            log.warning("MODO DESCOBERTA: sem cap de follow. Rodando até o IG bloquear. "
-                        "(%d posts no backlog)", len(candidatos))
-        log.info("Próximos a processar: %s",
-                 ", ".join(p["code"] for p in candidatos[:8]) + (" …" if len(candidatos) > 8 else ""))
-
         try:
+            nodes = ig.ler_mensagens(debug_dump=debug, parar_na_reacao=True)
+            log.info("%d mensagens varridas.", len(nodes))
+            posts = montar_lista_posts(nodes, state)
+            feitos = [p["code"] for p in posts if p["processed"]]
+            log.info("%d posts na thread | %d já marcados.", len(posts), len(feitos))
+
+            candidatos = escolher_candidatos(posts, start_after=start_after)
+            limite = config.MAX_POSTS_POR_RUN if config.APLICAR_CAPS else len(candidatos)
+            candidatos = candidatos[:limite]
+            if not candidatos:
+                log.info("Nenhum post novo para processar.")
+                return
+            if not config.APLICAR_CAPS:
+                log.warning("MODO DESCOBERTA: sem cap de follow. Rodando até o IG bloquear. "
+                            "(%d posts no backlog)", len(candidatos))
+            log.info("Próximos a processar: %s",
+                     ", ".join(p["code"] for p in candidatos[:8]) + (" …" if len(candidatos) > 8 else ""))
+
             for i, p in enumerate(candidatos):
                 processar_post(ig, p, state, guard, dry)
                 if i < len(candidatos) - 1:
                     guard.dormir(config.DELAY_POST, "entre posts")
+            log.info("Backlog deste run concluído.")
         except LimiteAtingido as e:
-            log.info("Parando com elegância: %s", e)
+            log.info("Parando (cap atingido): %s", e)
         except BloqueioDetectado as e:
-            log.error("⛔ BLOQUEIO detectado pelo Instagram: %s", e)
-            log.error("⛔ TRAVOU APÓS %d follows nesta execução (%d nas últimas 24h).",
-                      guard.total_follows(), state.follows_ultimo_dia())
-            state.ativar_cooldown(config.COOLDOWN_BLOQUEIO_HORAS)
-            log.error("Cooldown de %dh ativado. NÃO insista — re-tentar agora piora o bloqueio.",
-                      config.COOLDOWN_BLOQUEIO_HORAS)
-            return
-        marca = " (simulado)" if dry else ""
-        log.info("Fim. Follows nesta execução%s: %d | dia: %d/%d.",
-                 marca, guard.total_follows(), state.follows_ultimo_dia(), config.MAX_FOLLOWS_DIA)
+            tratar_erro(e, "BLOQUEIO do Instagram — parando o run")
+        except KeyboardInterrupt:
+            log.info("Interrompido manualmente (Ctrl+C).")
+        except Exception as e:                        # qualquer outro erro: arquivo + resumo
+            tratar_erro(e, "erro inesperado — parando o run")
+        finally:
+            imprimir_saldo(guard, "simulado" if dry else "")
 
 
 def main():
@@ -205,21 +233,18 @@ def main():
     ap.add_argument("--debug", action="store_true", help="dump da 1ª página de mensagens")
     ap.add_argument("--start-after", metavar="CODE", help="começar após este shortcode")
     ap.add_argument("--ignore-window", action="store_true", help="ignora janela de horário")
-    ap.add_argument("--reset-cooldown", action="store_true", help="zera o cooldown de bloqueio")
     a = ap.parse_args()
 
-    if a.reset_cooldown:
-        State().limpar_cooldown()
-        log.info("Cooldown zerado.")
-        return
     if a.login:
         modo_login()
         return
     try:
         run(dry=a.dry_run, start_after=a.start_after, debug=a.debug,
             ignorar_janela=a.ignore_window)
-    except BloqueioDetectado as e:
-        log.error("⛔ Bloqueio: %s", e)
+    except KeyboardInterrupt:
+        log.info("Interrompido.")
+    except Exception as e:                            # rede de segurança final
+        tratar_erro(e, "erro fatal")
         sys.exit(2)
 
 
