@@ -14,7 +14,7 @@ import re
 from playwright.sync_api import sync_playwright
 
 import config
-from safety import log, checar_bloqueio
+from safety import log, checar_bloqueio, BloqueioDetectado
 
 # doc_ids capturados
 DOC_MESSAGE_LIST = "26407294142279455"   # IGDMessageListOffMsysQuery
@@ -277,7 +277,13 @@ class IG:
             "dtsg": self.tokens.get("dtsg"), "jazoest": self.tokens.get("jazoest"),
         })
         checar_bloqueio(res["status"], res["text"])
-        return _parse_json(res["text"])
+        try:
+            return _parse_json(res["text"])
+        except Exception:
+            # resposta vazia / HTML / 5xx que escapou do checar_bloqueio = throttle/erro do IG
+            raise BloqueioDetectado(
+                f"follow retornou resposta inválida (HTTP {res.get('status')}): "
+                f"{(res.get('text') or '')[:120]!r}")
 
     def reagir_coracao(self, message_id):
         """Reage ❤️ na mensagem do post dentro da thread."""
