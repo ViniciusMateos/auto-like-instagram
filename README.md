@@ -26,7 +26,12 @@ python -m playwright install chromium
 ## Uso
 
 ```bash
-# 1) login (só na 1ª vez) — abre o Chrome, você loga na mão, a sessão fica salva
+# 1) LOGAR — duas opções:
+#    a) import de cookies (recomendado — pula o reCAPTCHA do login automatizado):
+#       no Chrome normal logado, exporte os cookies do instagram.com (extensão
+#       Cookie-Editor → Export JSON) e importe:
+python main.py --import-cookies "C:\caminho\cookies.json"
+#    b) login manual na janela (pode travar no reCAPTCHA em conta flaggeada):
 python main.py --login
 
 # 2) SIMULAÇÃO — lê de verdade, mostra qual post entraria e quantos seguiria, sem agir
@@ -40,6 +45,10 @@ python main.py --start-after DQDF2QwkYh3   # força iniciar após um post espec�
 python main.py --debug                     # despeja a 1ª página de mensagens (calibração)
 python main.py --ignore-window             # ignora a janela de horário
 ```
+
+> Login usa o **Chrome real** (`USAR_CHROME_REAL=True` no config) e sessão salva —
+> nunca usuário/senha no código. Em conta flaggeada o `--login` trava no reCAPTCHA;
+> aí use o `--import-cookies`.
 
 ### Como ele decide qual post processar
 **Marcador = QUALQUER reação de QUALQUER conta.** Se o post já tem alguma reação,
