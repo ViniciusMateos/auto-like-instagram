@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.2] — 2026-06-26
+
+### Adicionado
+- feat: `--import-cookies` — importa a sessão do navegador normal (JSON do Cookie-Editor) e pula o login/reCAPTCHA
+- feat: usa o Chrome real (`channel=chrome`, sem flag de automação) — menos detectável, ajuda no reCAPTCHA do login
+
+### Modificado
+- update: mensagens de erro explicativas — `explicar_status()` traduz 429/401/403/5xx e códigos não-padrão do Meta (572 = throttle); bloqueios mostram a mensagem real do IG
+
+### Documentação
+- docs: README com login via import de cookies e Chrome real
+
 ## [1.0.1] — 2026-06-24
 
 ### Adicionado
