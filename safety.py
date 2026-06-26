@@ -66,6 +66,36 @@ MENSAGENS_BLOQUEIO = {
     "login_required", "consent_required", "rate_limit_error",
 }
 
+_STATUS = {
+    200: "OK",
+    400: "requisição recusada (validação ou ação bloqueada)",
+    401: "não autenticado — a sessão expirou/caiu (reimporte os cookies)",
+    403: "proibido — sessão inválida ou ação barrada",
+    429: "RATE LIMIT — ações demais num intervalo curto; o IG está te limitando",
+    500: "erro interno do servidor do IG (transitório)",
+    502: "bad gateway no IG (transitório)",
+    503: "serviço indisponível / sobrecarga no IG (transitório)",
+    504: "timeout no servidor do IG (transitório)",
+}
+
+
+def explicar_status(code):
+    """Tradução humana de um status HTTP (inclui os códigos não-padrão do Meta)."""
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        return "status desconhecido"
+    if code in _STATUS:
+        return _STATUS[code]
+    if 560 <= code <= 599:
+        return ("código não-padrão do Meta (faixa de throttle/sobrecarga) — quase sempre é "
+                "o IG te SEGURANDO por excesso de ações (rate limit), não erro de dados")
+    if 500 <= code < 600:
+        return "erro no servidor do IG (5xx, geralmente transitório)"
+    if 400 <= code < 500:
+        return "requisição recusada pelo IG (4xx)"
+    return "status inesperado"
+
 
 def checar_bloqueio(status_code, texto):
     """Levanta BloqueioDetectado SÓ com sinal estruturado real de bloqueio.
@@ -76,7 +106,7 @@ def checar_bloqueio(status_code, texto):
     """
     texto = texto or ""
     if status_code == 429:
-        raise BloqueioDetectado(f"HTTP 429 (rate limit): {texto[:400]}")
+        raise BloqueioDetectado(f"HTTP 429 — {explicar_status(429)}.")
 
     # tenta parsear o JSON da resposta
     body = texto[len("for (;;);"):] if texto.startswith("for (;;);") else texto
@@ -88,20 +118,24 @@ def checar_bloqueio(status_code, texto):
     if isinstance(j, dict):
         msg = str(j.get("message", "")).lower()
         status = str(j.get("status", "")).lower()
+        fb = j.get("feedback_message") or j.get("feedback_title") or ""
         if msg in MENSAGENS_BLOQUEIO:
-            raise BloqueioDetectado(f"message={msg}: {texto[:400]}")
+            extra = f' O IG disse: "{fb}"' if fb else ""
+            raise BloqueioDetectado(f'ação bloqueada (message="{msg}").{extra}')
         if j.get("spam") is True:                       # flag explícita de spam do IG
-            raise BloqueioDetectado(f"spam=true: {texto[:400]}")
+            extra = f' O IG disse: "{fb}"' if fb else ""
+            raise BloqueioDetectado(f"ação marcada como SPAM pelo IG.{extra}")
         if j.get("checkpoint_url") or j.get("challenge"):
-            raise BloqueioDetectado(f"checkpoint/challenge: {texto[:400]}")
+            raise BloqueioDetectado("checkpoint/desafio — o IG quer que você confirme que é você no app.")
         # status=fail acompanhado de uma mensagem de bloqueio conhecida
         if status == "fail" and any(k in msg for k in ("feedback", "checkpoint", "challenge", "blocked")):
-            raise BloqueioDetectado(f"status=fail {msg}: {texto[:400]}")
+            raise BloqueioDetectado(f'ação falhou (message="{msg}").' + (f' O IG disse: "{fb}"' if fb else ""))
         return
 
     # resposta não-JSON num endpoint de API = sessão caída / parede de login
     if body.lstrip()[:1] in ("<",) and status_code in (200, 302, 400):
-        raise BloqueioDetectado(f"HTTP {status_code}: resposta HTML (sessão caída?) {body[:200]}")
+        raise BloqueioDetectado(f"HTTP {status_code} — o IG devolveu uma página HTML "
+                                f"(sessão caiu ou checkpoint), não dados.")
 
 
 # ───────────────────────── estado ──────────────────────────────
