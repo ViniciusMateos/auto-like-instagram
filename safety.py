@@ -59,6 +59,10 @@ class LimiteAtingido(Exception):
     """Bateu um cap (diário/horário) — parar com elegância, sem ser bloqueio."""
 
 
+class ErroTransitorio(Exception):
+    """Resposta recuperável (5xx/HTML/vazia) — dá pra tentar de novo, NÃO é bloqueio."""
+
+
 # ─────────────────── detecção de bloqueio ───────────────────────
 # Mensagens de bloqueio do IG vêm no campo "message" do JSON de resposta.
 MENSAGENS_BLOQUEIO = {
@@ -132,10 +136,8 @@ def checar_bloqueio(status_code, texto):
             raise BloqueioDetectado(f'ação falhou (message="{msg}").' + (f' O IG disse: "{fb}"' if fb else ""))
         return
 
-    # resposta não-JSON num endpoint de API = sessão caída / parede de login
-    if body.lstrip()[:1] in ("<",) and status_code in (200, 302, 400):
-        raise BloqueioDetectado(f"HTTP {status_code} — o IG devolveu uma página HTML "
-                                f"(sessão caiu ou checkpoint), não dados.")
+    # Resposta não-JSON (HTML/vazia/5xx) NÃO é tratada como bloqueio aqui — é
+    # transitória/recuperável. Quem chama tenta de novo (ver ErroTransitorio no ig.py).
 
 
 # ───────────────────────── estado ──────────────────────────────
@@ -230,6 +232,7 @@ class Guard:
         self.seguidos = 0            # públicas que viraram "Seguindo"
         self.pendentes = 0           # privadas (pedido enviado)
         self.pulados = 0             # já seguia / privado(config) / etc.
+        self.falhas_seguidas = 0     # erros transitórios consecutivos (reseta no sucesso)
 
     def checar_janela(self, ignorar=False):
         if ignorar or not config.APLICAR_CAPS:

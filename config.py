@@ -72,6 +72,12 @@ START_FROM_OLDEST_SE_VAZIO = False   # False = não age sozinho; pede --start-af
 # Cooldown após sinal de bloqueio (horas)
 COOLDOWN_BLOQUEIO_HORAS = 36
 
+# Erros transitórios (5xx/HTML/vazio) são retentados; cada follow tenta N vezes.
+# Se acontecerem MUITAS falhas SEGUIDAS (sem nenhum sucesso no meio), aí sim
+# considera que a sessão caiu/checkpoint e para (com screenshot).
+TENTATIVAS_POR_FOLLOW = 3
+MAX_FALHAS_SEGUIDAS = 10
+
 # Quantas páginas de mensagens varrer (20 msgs/página, newest→oldest).
 # Os posts já feitos (com ❤️) ficam BEM no fundo — a paginação sobe até achar
 # o seu primeiro coração (o "boundary") e para. Este é só o teto de segurança.

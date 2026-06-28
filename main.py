@@ -23,6 +23,7 @@ from datetime import datetime
 
 import config
 from safety import State, Guard, log, BloqueioDetectado, LimiteAtingido
+from safety import ErroTransitorio
 from ig import IG, extrair_post, tem_reacao
 
 LOGS_ERRO_DIR = os.path.join(config.OUTPUT_DIR, "logs")
@@ -179,7 +180,24 @@ def processar_post(ig, p, state, guard, dry):
             else:    seguidos += 1; guard.seguidos += 1
             guard.pos_follow_dry()                # contabiliza p/ o cap ser fiel
             continue
-        resp = ig.seguir(uid)
+        try:
+            resp = ig.seguir(uid)
+        except ErroTransitorio as e:              # 5xx/HTML/vazio → pula e segue
+            guard.falhas_seguidas += 1
+            log.warning("│    ~ @%s pulado — %s (falha %d/%d)",
+                        uname, e, guard.falhas_seguidas, config.MAX_FALHAS_SEGUIDAS)
+            if guard.falhas_seguidas >= config.MAX_FALHAS_SEGUIDAS:
+                ig.diagnostico("muitas_falhas_seguidas")
+                if ig.logado():
+                    raise BloqueioDetectado(
+                        f"{guard.falhas_seguidas} respostas HTML seguidas no follow, mas a SESSÃO "
+                        f"está OK (logado) → o IG bloqueou a AÇÃO de seguir (soft block, rate limit). "
+                        f"Conta sã, só precisa dar um tempo. (screenshot em output/logs/)")
+                raise BloqueioDetectado(
+                    f"{guard.falhas_seguidas} falhas seguidas e a SESSÃO CAIU → "
+                    f"reimporte os cookies. (screenshot em output/logs/)")
+            continue
+        guard.falhas_seguidas = 0                 # sucesso reseta o contador
         fs = resp.get("friendship_status") or {}
         if fs.get("following"):                   # pública → virou "Seguindo"
             state.marcar_seguido(uid); seguidos += 1; guard.seguidos += 1
@@ -252,6 +270,10 @@ def run(dry=False, start_after=None, debug=False, ignorar_janela=False):
             log.info("Parando (cap atingido): %s", e)
         except BloqueioDetectado as e:
             tratar_erro(e, "BLOQUEIO do Instagram — parando o run")
+            try:
+                ig.diagnostico("bloqueio")        # 📸 screenshot pra você VER o que era
+            except Exception:
+                pass
         except KeyboardInterrupt:
             log.info("Interrompido manualmente (Ctrl+C).")
         except Exception as e:                        # qualquer outro erro: arquivo + resumo

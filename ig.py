@@ -10,11 +10,12 @@ Endpoints/payloads vêm da captura real (ver API_REFERENCE.md).
 """
 import json
 import re
+import random
 
 from playwright.sync_api import sync_playwright
 
 import config
-from safety import log, checar_bloqueio, BloqueioDetectado, explicar_status
+from safety import log, checar_bloqueio, BloqueioDetectado, ErroTransitorio, explicar_status
 
 # doc_ids capturados
 DOC_MESSAGE_LIST = "26407294142279455"   # IGDMessageListOffMsysQuery
@@ -289,22 +290,56 @@ class IG:
         users.extend(data.get("users", []))
         return users
 
-    def seguir(self, user_id):
-        """Executa o follow. Retorna o dict de resposta do IG."""
-        res = self.page.evaluate(JS_FOLLOW, {
-            **self._base(), "user_id": str(user_id),
-            "dtsg": self.tokens.get("dtsg"), "jazoest": self.tokens.get("jazoest"),
-        })
-        checar_bloqueio(res["status"], res["text"])
+    def seguir(self, user_id, tentativas=None):
+        """Executa o follow. Retorna o dict de resposta do IG.
+
+        Bloqueio REAL (feedback_required/spam/checkpoint/429) → BloqueioDetectado (para).
+        Resposta transitória (5xx/HTML/vazia) → tenta de novo recarregando os tokens;
+        se esgotar as tentativas, levanta ErroTransitorio (quem chama pula e continua).
+        """
+        tentativas = tentativas or getattr(config, "TENTATIVAS_POR_FOLLOW", 3)
+        ult = None
+        for t in range(tentativas):
+            res = self.page.evaluate(JS_FOLLOW, {
+                **self._base(), "user_id": str(user_id),
+                "dtsg": self.tokens.get("dtsg"), "jazoest": self.tokens.get("jazoest"),
+            })
+            checar_bloqueio(res["status"], res["text"])   # bloqueio real → para (sem retry)
+            try:
+                return _parse_json(res["text"])
+            except Exception:
+                st = res.get("status")
+                ult = (st, (res.get("text") or "").strip())
+                if t < tentativas - 1:
+                    log.warning("  ~ follow %s: HTTP %s (transitório) — tentativa %d/%d, "
+                                "recarregando tokens e repetindo", user_id, st, t + 1, tentativas)
+                    self.page.wait_for_timeout(random.randint(3000, 8000))
+                    try:
+                        self.carregar_tokens()           # tokens podem ter rotacionado
+                    except Exception:
+                        pass
+        st, corpo = ult
+        detalhe = f'corpo: "{corpo[:120]}"' if corpo else "corpo vazio"
+        raise ErroTransitorio(f"HTTP {st} ({explicar_status(st)}) após {tentativas} tentativas — {detalhe}")
+
+    def diagnostico(self, motivo="diag"):
+        """Salva screenshot + URL + (se houver) corpo da última resposta, pra você VER
+        o que o navegador está mostrando (login? checkpoint? feed normal?)."""
+        import os
+        from datetime import datetime
+        os.makedirs(os.path.join(config.OUTPUT_DIR, "logs"), exist_ok=True)
+        base = os.path.join(config.OUTPUT_DIR, "logs", f"diag_{datetime.now():%Y%m%d_%H%M%S}")
+        info = {"motivo": motivo}
         try:
-            return _parse_json(res["text"])
-        except Exception:
-            # resposta vazia / HTML / 5xx que escapou do checar_bloqueio = throttle/erro do IG
-            st = res.get("status")
-            corpo = (res.get("text") or "").strip()
-            detalhe = f'o IG respondeu: "{corpo[:150]}"' if corpo else "o IG não retornou nada (corpo vazio)"
-            raise BloqueioDetectado(
-                f"follow travado — HTTP {st}: {explicar_status(st)}. {detalhe}")
+            self.ir("https://www.instagram.com/")        # vai pro topo pra revelar login/checkpoint
+            info["url"] = self.page.url
+            info["logado"] = self.logado()
+            self.page.screenshot(path=base + ".png", full_page=False)
+            log.error("📸 screenshot do estado salvo em %s.png (logado=%s, url=%s)",
+                      base, info["logado"], info["url"])
+        except Exception as e:
+            log.warning("não consegui tirar screenshot: %s", e)
+        return base + ".png"
 
     def reagir_coracao(self, message_id):
         """Reage ❤️ na mensagem do post dentro da thread."""
