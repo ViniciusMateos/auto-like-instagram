@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.4] — 2026-06-29
+
+### Corrigido
+- fix: follow via mutation GraphQL (`usePolarisFollowMutation`) — o endpoint REST `friendships/create` passou a devolver HTML (302) na web e o follow não pegava mais
+
+### Adicionado
+- feat: `diag_capturar_follow.py` — captura o request real de follow (clique manual) pra calibrar a chamada
+
+### Documentação
+- docs: `API_REFERENCE.md` — seção do follow atualizada (REST → GraphQL)
+
 ## [1.0.3] — 2026-06-28
 
 ### Adicionado
