@@ -250,6 +250,10 @@ class Guard:
 
     def pode_seguir(self):
         """Levanta LimiteAtingido se algum cap foi batido (conta dry-run também)."""
+        # limite de follows REAIS neste run — vale INDEPENDENTE dos caps diários/horários
+        lim = getattr(config, "LIMITE_FOLLOWS_RUN", 0)
+        if lim and self.seguidos >= lim:
+            raise LimiteAtingido(f"Limite de {lim} follows reais neste run atingido.")
         if not config.APLICAR_CAPS:
             return                       # modo descoberta: sem cap de volume
         if self.state.follows_ultimo_dia() + self._dry_extra >= config.MAX_FOLLOWS_DIA:

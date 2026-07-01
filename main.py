@@ -11,9 +11,16 @@ Fluxo (igual ao manual):
 Uso:
   python main.py --login            # 1ª vez: faz login manual na janela
   python main.py --dry-run          # simula tudo (lê de verdade, não age) ← FAÇA ISSO 1º
-  python main.py                    # roda pra valer
+  python main.py                    # roda pra valer (modo padrão, 1º chat salvo)
   python main.py --start-after CODE # força começar depois de um post específico
   python main.py --debug            # despeja a 1ª página de mensagens p/ calibração
+
+Modular (modos e chats):
+  python main.py --listar-modos                 # mostra os modos (padrao/agressivo/calmo)
+  python main.py --listar-chats                 # mostra os chats salvos
+  python main.py --add-chat "Grupo X" 12345     # salva um chat (nome + thread_id)
+  python main.py --chat "Grupo X" --modo calmo  # roda no chat X com o modo calmo
+  python main.py --modo agressivo --limite 500  # modo agressivo, parando em 500 follows reais
 """
 import argparse
 import os
@@ -22,6 +29,7 @@ import traceback
 from datetime import datetime
 
 import config
+import perfis
 from safety import State, Guard, log, BloqueioDetectado, LimiteAtingido
 from safety import ErroTransitorio
 from ig import IG, extrair_post, tem_reacao
@@ -290,14 +298,53 @@ def main():
     ap.add_argument("--debug", action="store_true", help="dump da 1ª página de mensagens")
     ap.add_argument("--start-after", metavar="CODE", help="começar após este shortcode")
     ap.add_argument("--ignore-window", action="store_true", help="ignora janela de horário")
+    # ── modularização (modos/chats) ──
+    ap.add_argument("--chat", metavar="NOME", help="qual chat salvo rodar (nome ou thread_id). Padrão: o 1º salvo")
+    ap.add_argument("--modo", metavar="NOME", default="padrao", help="modo: padrao, agressivo, calmo…")
+    ap.add_argument("--limite", type=int, metavar="N", help="limite de follows reais neste run (sobrescreve o do modo)")
+    ap.add_argument("--listar-chats", action="store_true", help="lista os chats salvos e sai")
+    ap.add_argument("--listar-modos", action="store_true", help="lista os modos salvos e sai")
+    ap.add_argument("--add-chat", nargs=2, metavar=("NOME", "THREAD_ID"), help="salva um chat e sai")
     a = ap.parse_args()
 
+    if a.listar_chats:
+        for c in perfis.carregar_chats():
+            log.info("chat: %-30s thread_id=%s", c.get("nome"), c.get("thread_id"))
+        return
+    if a.listar_modos:
+        for nome, p in perfis.carregar_perfis().items():
+            log.info("modo: %-12s caps=%s | limite/run=%s | delay_follow=%s | delay_post=%s",
+                     nome, p["aplicar_caps"], p["limite_follows_run"],
+                     p["delay_follow"], p["delay_post"])
+        return
+    if a.add_chat:
+        c = perfis.add_chat(a.add_chat[0], a.add_chat[1])
+        log.info("✓ chat salvo: %s (thread_id=%s)", c["nome"], c["thread_id"])
+        return
     if a.import_cookies:
         modo_importar_cookies(a.import_cookies)
         return
     if a.login:
         modo_login()
         return
+
+    # aplica o MODO + CHAT escolhidos no config antes de rodar
+    perfil = perfis.get_perfil(a.modo)
+    if not perfil:
+        log.error("Modo '%s' não existe. Use --listar-modos.", a.modo)
+        sys.exit(2)
+    if a.limite is not None:
+        perfil["limite_follows_run"] = a.limite
+    chats = perfis.carregar_chats()
+    chat = perfis.get_chat(a.chat) if a.chat else (chats[0] if chats else None)
+    if a.chat and not chat:
+        log.error("Chat '%s' não encontrado. Use --listar-chats ou --add-chat.", a.chat)
+        sys.exit(2)
+    perfis.aplicar(config, perfil, chat)
+    log.info("Modo: %s  |  Chat: %s  |  limite/run: %s", a.modo,
+             (chat or {}).get("nome", "(config padrão)"),
+             config.LIMITE_FOLLOWS_RUN or "sem limite")
+
     try:
         run(dry=a.dry_run, start_after=a.start_after, debug=a.debug,
             ignorar_janela=a.ignore_window)

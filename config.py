@@ -46,6 +46,14 @@ MAX_POSTS_POR_RUN = 5         # (só vale com APLICAR_CAPS=True) posts por execu
 # (sem cap por post: segue TODOS os curtidores; se bater cap no meio, o post NÃO é
 #  marcado e retoma no próximo run, pulando quem já seguiu)
 
+# Limite de follows REAIS (que viraram "Seguindo", sem contar pedido pendente) neste run.
+# 0 = sem limite (vai até o IG bloquear). Vale INDEPENDENTE de APLICAR_CAPS.
+LIMITE_FOLLOWS_RUN = 0
+
+# Espera entre um chat e outro (quando rodar vários em sequência). O toggle liga/desliga.
+USAR_DELAY_ENTRE_CHATS = True
+DELAY_ENTRE_CHATS = (120, 300)
+
 # Delays aleatórios (segundos) — NUNCA use intervalo fixo
 DELAY_FOLLOW = (0, 5)         # entre um follow e outro (modo rápido/descoberta)
 DELAY_POST = (180, 480)       # entre terminar um post e abrir o próximo (3–8 min)

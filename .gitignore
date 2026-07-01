@@ -8,6 +8,10 @@ cookies/
 output/
 *.log
 
+# modos e chats salvos (dados do usuário — defaults vivem em perfis.py)
+perfis.json
+chats.json
+
 # python
 __pycache__/
 *.pyc
